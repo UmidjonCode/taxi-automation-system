@@ -18,6 +18,42 @@ public class BookingsController : ControllerBase
     public Task<IActionResult> Create([FromBody] CreateBookingRequest req, CancellationToken ct)
         => Guard(() => _facade.CreateBookingAsync(req, ct));
 
+    // ─── Room Hold Endpoints ───────────────────────────────────
+
+    /// <summary>Hold a room for 5 minutes while the guest completes payment.</summary>
+    [HttpPost("hold")]
+    public Task<IActionResult> CreateHold([FromBody] CreateHoldRequest req, CancellationToken ct)
+        => Guard(async () =>
+        {
+            var hold = await _facade.CreateHoldAsync(req.RoomId, req.GuestId, req.CheckIn, req.CheckOut, ct);
+            return (object)new
+            {
+                hold.Id,
+                hold.RoomId,
+                hold.GuestId,
+                hold.CheckIn,
+                hold.CheckOut,
+                hold.ExpiresAt,
+                Status = hold.Status.ToString()
+            };
+        });
+
+    /// <summary>Convert a hold into a confirmed booking (payment received).</summary>
+    [HttpPost("hold/{id:guid}/confirm")]
+    public Task<IActionResult> ConfirmHold(Guid id, [FromBody] ConfirmHoldRequest req, CancellationToken ct)
+        => Guard(() => _facade.ConfirmHoldAsync(id, req.AdvancePayment, ct));
+
+    /// <summary>Manually release a hold (guest cancelled the payment).</summary>
+    [HttpDelete("hold/{id:guid}")]
+    public Task<IActionResult> ReleaseHold(Guid id, CancellationToken ct)
+        => Guard(async () =>
+        {
+            await _facade.ReleaseHoldAsync(id, ct);
+            return (object)new { ok = true };
+        });
+
+    // ─── Booking Lifecycle ─────────────────────────────────────
+
     [HttpPost("{id:guid}/confirm")]
     public Task<IActionResult> Confirm(Guid id, [FromBody] ConfirmBookingRequest req, CancellationToken ct)
         => Guard(() => _facade.ConfirmBookingAsync(id, req.AdvancePayment, ct));

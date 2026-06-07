@@ -13,6 +13,7 @@ public class ReceptionDbContext : DbContext
     public DbSet<Booking> Bookings => Set<Booking>();
     public DbSet<BookingExtra> BookingExtras => Set<BookingExtra>();
     public DbSet<RoomKey> RoomKeys => Set<RoomKey>();
+    public DbSet<RoomHold> RoomHolds => Set<RoomHold>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -25,5 +26,13 @@ public class ReceptionDbContext : DbContext
             .HasOne(x => x.Room).WithMany().HasForeignKey(x => x.RoomId);
         b.Entity<Booking>()
             .HasMany(x => x.Extras).WithOne().HasForeignKey(x => x.BookingId);
+
+        b.Entity<RoomHold>()
+            .HasOne(h => h.Room).WithMany().HasForeignKey(h => h.RoomId);
+        b.Entity<RoomHold>()
+            .HasOne(h => h.Guest).WithMany().HasForeignKey(h => h.GuestId);
+        // Index for fast overlap queries on active holds
+        b.Entity<RoomHold>()
+            .HasIndex(h => new { h.RoomId, h.Status });
     }
 }

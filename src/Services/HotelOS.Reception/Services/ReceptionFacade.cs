@@ -1,3 +1,4 @@
+using System.Data;
 using HotelOS.Reception.Data;
 using HotelOS.Reception.Models;
 using HotelOS.Shared.Algorithms.Billing;
@@ -16,6 +17,9 @@ namespace HotelOS.Reception.Services;
 /// </summary>
 public sealed class ReceptionFacade
 {
+    /// <summary>How long a room hold lasts before auto-expiry.</summary>
+    public static readonly TimeSpan HoldDuration = TimeSpan.FromMinutes(5);
+
     private readonly ReceptionDbContext _db;
     private readonly IRoomAssignmentStrategy _assignment;
     private readonly IBillingCalculator _billing;
@@ -39,6 +43,10 @@ public sealed class ReceptionFacade
         _logger = logger;
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  ROOM SEARCH
+    // ═══════════════════════════════════════════════════════════════════
+
     public record RoomSearchResult(Room Room, bool IsAvailable);
 
     public async Task<IReadOnlyList<RoomSearchResult>> SearchRoomsAsync(
@@ -53,11 +61,219 @@ public sealed class ReceptionFacade
         var results = new List<RoomSearchResult>();
         foreach (var room in rooms)
         {
-            var hasOverlap = await HasOverlapAsync(room.Id, checkIn, checkOut, ct);
+            var hasOverlap = await HasOverlapOrHoldAsync(room.Id, checkIn, checkOut, ct);
             results.Add(new RoomSearchResult(room, !hasOverlap));
         }
         return results;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  ROOM HOLD SYSTEM — 5-minute temporary reservation during payment
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Places a 5-minute hold on a specific room for the given dates.
+    /// Uses a SERIALIZABLE transaction to prevent two users from holding the same room.
+    /// If the room is already booked or held by another user, throws InvalidOperationException.
+    /// </summary>
+    public async Task<RoomHold> CreateHoldAsync(Guid roomId, Guid guestId, DateTime checkIn, DateTime checkOut, CancellationToken ct = default)
+    {
+        if (checkOut.Date <= checkIn.Date)
+            throw new InvalidOperationException("CheckOut must be after CheckIn.");
+
+        // Use SERIALIZABLE isolation to prevent the TOCTOU race condition.
+        // SQLite implements this as BEGIN EXCLUSIVE — only one writer at a time.
+        using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+
+        try
+        {
+            var room = await _db.Rooms.FindAsync(new object[] { roomId }, ct)
+                ?? throw new KeyNotFoundException($"Room {roomId} not found.");
+
+            // Check for overlapping confirmed bookings
+            var hasBookingOverlap = await HasOverlapAsync(roomId, checkIn, checkOut, ct);
+            if (hasBookingOverlap)
+                throw new InvalidOperationException("This room is already booked for the selected dates.");
+
+            // Check for overlapping active holds by OTHER users
+            var hasHoldOverlap = await _db.RoomHolds.AnyAsync(h =>
+                h.RoomId == roomId
+                && h.Status == RoomHoldStatus.Active
+                && h.ExpiresAt > DateTime.UtcNow
+                && h.CheckIn < checkOut && checkIn < h.CheckOut
+                && h.GuestId != guestId, ct);
+
+            if (hasHoldOverlap)
+                throw new InvalidOperationException("This room is currently being held by another guest. Please try again in a few minutes.");
+
+            // Cancel any existing active hold by the SAME user for the same room+dates
+            var existingHold = await _db.RoomHolds.FirstOrDefaultAsync(h =>
+                h.RoomId == roomId && h.GuestId == guestId && h.Status == RoomHoldStatus.Active, ct);
+            if (existingHold != null)
+                existingHold.Status = RoomHoldStatus.Released;
+
+            var hold = new RoomHold
+            {
+                RoomId = roomId,
+                GuestId = guestId,
+                CheckIn = checkIn,
+                CheckOut = checkOut,
+                ExpiresAt = DateTime.UtcNow.Add(HoldDuration)
+            };
+
+            _db.RoomHolds.Add(hold);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            _logger.LogInformation("Hold {HoldId} created for room {RoomId} by guest {GuestId}. Expires at {Expiry}.",
+                hold.Id, roomId, guestId, hold.ExpiresAt);
+
+            return hold;
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Converts an active, non-expired hold into a confirmed booking.
+    /// Uses a SERIALIZABLE transaction — if the hold has expired, the booking is rejected.
+    /// </summary>
+    public async Task<BookingResponse> ConfirmHoldAsync(Guid holdId, decimal advancePayment, CancellationToken ct = default)
+    {
+        using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+
+        try
+        {
+            var hold = await _db.RoomHolds
+                .Include(h => h.Room)
+                .FirstOrDefaultAsync(h => h.Id == holdId, ct)
+                ?? throw new KeyNotFoundException($"Hold {holdId} not found.");
+
+            if (hold.Status != RoomHoldStatus.Active)
+                throw new InvalidOperationException($"Hold is no longer active (status: {hold.Status}).");
+
+            if (hold.ExpiresAt <= DateTime.UtcNow)
+            {
+                hold.Status = RoomHoldStatus.Expired;
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                throw new InvalidOperationException("Your hold has expired. The room may have been taken. Please search again.");
+            }
+
+            // Double-check no booking was sneaked in (belt and suspenders)
+            var hasOverlap = await HasOverlapAsync(hold.RoomId, hold.CheckIn, hold.CheckOut, ct);
+            if (hasOverlap)
+            {
+                hold.Status = RoomHoldStatus.Released;
+                await _db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                throw new InvalidOperationException("Room was booked by another process. Please search again.");
+            }
+
+            // Convert hold → booking
+            hold.Status = RoomHoldStatus.Confirmed;
+
+            var booking = new Booking
+            {
+                GuestId = hold.GuestId,
+                RoomId = hold.RoomId,
+                BranchId = hold.Room!.BranchId,
+                CheckIn = hold.CheckIn,
+                CheckOut = hold.CheckOut,
+                NightlyRate = hold.Room.NightlyRate,
+                AdvancePayment = advancePayment,
+                Status = advancePayment > 0 ? BookingStatus.Confirmed : BookingStatus.Pending
+            };
+
+            _db.Bookings.Add(booking);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            // Publish events outside the transaction
+            await _bus.PublishAsync(new BookingCreatedEvent
+            {
+                BookingId = booking.Id,
+                GuestId = hold.GuestId,
+                RoomId = hold.RoomId,
+                RoomNumber = hold.Room.RoomNumber,
+                CheckIn = booking.CheckIn,
+                CheckOut = booking.CheckOut,
+                BranchId = booking.BranchId
+            }, ct);
+
+            if (booking.Status == BookingStatus.Confirmed)
+                await _bus.PublishAsync(new BookingConfirmedEvent
+                {
+                    BookingId = booking.Id,
+                    GuestId = hold.GuestId,
+                    RoomId = hold.RoomId,
+                    AdvancePayment = booking.AdvancePayment
+                }, ct);
+
+            _logger.LogInformation("Hold {HoldId} confirmed → Booking {BookingId} for room {Room}.",
+                holdId, booking.Id, hold.Room.RoomNumber);
+
+            return new BookingResponse
+            {
+                BookingId = booking.Id,
+                GuestId = hold.GuestId,
+                RoomId = hold.RoomId,
+                RoomNumber = hold.Room.RoomNumber,
+                MatchTier = 0,
+                AssignmentReason = "Hold confirmed — room secured.",
+                Status = booking.Status.ToString(),
+                NightlyRate = booking.NightlyRate,
+                AdvancePayment = booking.AdvancePayment
+            };
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    /// <summary>Guest manually releases a hold before it expires.</summary>
+    public async Task ReleaseHoldAsync(Guid holdId, CancellationToken ct = default)
+    {
+        var hold = await _db.RoomHolds.FindAsync(new object[] { holdId }, ct)
+            ?? throw new KeyNotFoundException($"Hold {holdId} not found.");
+
+        if (hold.Status != RoomHoldStatus.Active)
+            throw new InvalidOperationException($"Hold is not active (status: {hold.Status}).");
+
+        hold.Status = RoomHoldStatus.Released;
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Hold {HoldId} released manually.", holdId);
+    }
+
+    /// <summary>Expires all holds that have passed their ExpiresAt time. Called by HoldExpiryService.</summary>
+    public async Task<int> ExpireStaleHoldsAsync(CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var staleHolds = await _db.RoomHolds
+            .Where(h => h.Status == RoomHoldStatus.Active && h.ExpiresAt <= now)
+            .ToListAsync(ct);
+
+        foreach (var hold in staleHolds)
+            hold.Status = RoomHoldStatus.Expired;
+
+        if (staleHolds.Count > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+            _logger.LogInformation("Expired {Count} stale room holds.", staleHolds.Count);
+        }
+
+        return staleHolds.Count;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  GUEST LOOKUPS
+    // ═══════════════════════════════════════════════════════════════════
 
     public async Task<IReadOnlyList<BookingResponse>> GetBookingsByEmailAsync(string email, CancellationToken ct = default)
     {
@@ -84,91 +300,112 @@ public sealed class ReceptionFacade
         }).ToList();
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    //  DIRECT BOOKING (still supported for Receptionist / API use)
+    // ═══════════════════════════════════════════════════════════════════
+
     public async Task<BookingResponse> CreateBookingAsync(CreateBookingRequest req, CancellationToken ct = default)
     {
         if (req.CheckOut.Date <= req.CheckIn.Date)
             throw new InvalidOperationException("CheckOut must be after CheckIn.");
 
-        var branchId = req.BranchId ?? ReceptionSeeder.DefaultBranchId;
-        var guest = await ResolveGuestAsync(req, ct);
+        // SERIALIZABLE transaction to prevent the TOCTOU double-booking race.
+        using var tx = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
 
-        // Candidate set: right style, in service, clean and free for the dates.
-        var candidateRooms = await _db.Rooms
-            .Where(r => r.Style == req.Style && r.Status != RoomStatus.OutOfService
-                        && r.CleanStatus == RoomCleanStatus.Clean && r.BranchId == branchId)
-            .ToListAsync(ct);
-
-        var free = new List<Room>();
-        foreach (var room in candidateRooms)
-            if (!await HasOverlapAsync(room.Id, req.CheckIn, req.CheckOut, ct))
-                free.Add(room);
-
-        var assignmentRequest = new RoomAssignmentRequest
+        try
         {
-            RequestedStyle = req.Style,
-            PreferredFloor = req.PreferredFloor,
-            ProximityPreference = req.ProximityPreference,
-            CheckIn = req.CheckIn,
-            CheckOut = req.CheckOut,
-            BranchId = branchId
-        };
+            var branchId = req.BranchId ?? ReceptionSeeder.DefaultBranchId;
+            var guest = await ResolveGuestAsync(req, ct);
 
-        var result = _assignment.Assign(assignmentRequest, free.Select(ToCandidate).ToList());
-        if (!result.Success || result.RoomId is null)
-            throw new InvalidOperationException(result.Reason);
+            // Candidate set: right style, in service, clean and free for the dates.
+            var candidateRooms = await _db.Rooms
+                .Where(r => r.Style == req.Style && r.Status != RoomStatus.OutOfService
+                            && r.CleanStatus == RoomCleanStatus.Clean && r.BranchId == branchId)
+                .ToListAsync(ct);
 
-        var room2 = free.First(r => r.Id == result.RoomId);
+            var free = new List<Room>();
+            foreach (var room in candidateRooms)
+                if (!await HasOverlapOrHoldAsync(room.Id, req.CheckIn, req.CheckOut, ct))
+                    free.Add(room);
 
-        var booking = new Booking
-        {
-            GuestId = guest.Id,
-            RoomId = room2.Id,
-            BranchId = branchId,
-            CheckIn = req.CheckIn,
-            CheckOut = req.CheckOut,
-            NightlyRate = room2.NightlyRate,
-            AdvancePayment = req.AdvancePayment,
-            Status = req.AdvancePayment > 0 ? BookingStatus.Confirmed : BookingStatus.Pending
-        };
-        _db.Bookings.Add(booking);
-        await _db.SaveChangesAsync(ct);
+            var assignmentRequest = new RoomAssignmentRequest
+            {
+                RequestedStyle = req.Style,
+                PreferredFloor = req.PreferredFloor,
+                ProximityPreference = req.ProximityPreference,
+                CheckIn = req.CheckIn,
+                CheckOut = req.CheckOut,
+                BranchId = branchId
+            };
 
-        await _bus.PublishAsync(new BookingCreatedEvent
-        {
-            BookingId = booking.Id,
-            GuestId = guest.Id,
-            RoomId = room2.Id,
-            RoomNumber = room2.RoomNumber,
-            CheckIn = booking.CheckIn,
-            CheckOut = booking.CheckOut,
-            BranchId = branchId
-        }, ct);
+            var result = _assignment.Assign(assignmentRequest, free.Select(ToCandidate).ToList());
+            if (!result.Success || result.RoomId is null)
+                throw new InvalidOperationException(result.Reason);
 
-        if (booking.Status == BookingStatus.Confirmed)
-            await _bus.PublishAsync(new BookingConfirmedEvent
+            var room2 = free.First(r => r.Id == result.RoomId);
+
+            var booking = new Booking
+            {
+                GuestId = guest.Id,
+                RoomId = room2.Id,
+                BranchId = branchId,
+                CheckIn = req.CheckIn,
+                CheckOut = req.CheckOut,
+                NightlyRate = room2.NightlyRate,
+                AdvancePayment = req.AdvancePayment,
+                Status = req.AdvancePayment > 0 ? BookingStatus.Confirmed : BookingStatus.Pending
+            };
+            _db.Bookings.Add(booking);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+
+            // Publish events outside the transaction
+            await _bus.PublishAsync(new BookingCreatedEvent
             {
                 BookingId = booking.Id,
                 GuestId = guest.Id,
                 RoomId = room2.Id,
-                AdvancePayment = booking.AdvancePayment
+                RoomNumber = room2.RoomNumber,
+                CheckIn = booking.CheckIn,
+                CheckOut = booking.CheckOut,
+                BranchId = branchId
             }, ct);
 
-        _logger.LogInformation("Booking {Id} created for room {Room} (tier {Tier}).",
-            booking.Id, room2.RoomNumber, result.MatchTier);
+            if (booking.Status == BookingStatus.Confirmed)
+                await _bus.PublishAsync(new BookingConfirmedEvent
+                {
+                    BookingId = booking.Id,
+                    GuestId = guest.Id,
+                    RoomId = room2.Id,
+                    AdvancePayment = booking.AdvancePayment
+                }, ct);
 
-        return new BookingResponse
+            _logger.LogInformation("Booking {Id} created for room {Room} (tier {Tier}).",
+                booking.Id, room2.RoomNumber, result.MatchTier);
+
+            return new BookingResponse
+            {
+                BookingId = booking.Id,
+                GuestId = guest.Id,
+                RoomId = room2.Id,
+                RoomNumber = room2.RoomNumber,
+                MatchTier = result.MatchTier,
+                AssignmentReason = result.Reason,
+                Status = booking.Status.ToString(),
+                NightlyRate = room2.NightlyRate,
+                AdvancePayment = booking.AdvancePayment
+            };
+        }
+        catch
         {
-            BookingId = booking.Id,
-            GuestId = guest.Id,
-            RoomId = room2.Id,
-            RoomNumber = room2.RoomNumber,
-            MatchTier = result.MatchTier,
-            AssignmentReason = result.Reason,
-            Status = booking.Status.ToString(),
-            NightlyRate = room2.NightlyRate,
-            AdvancePayment = booking.AdvancePayment
-        };
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  BOOKING LIFECYCLE
+    // ═══════════════════════════════════════════════════════════════════
 
     public async Task<BookingResponse> ConfirmBookingAsync(Guid bookingId, decimal advancePayment, CancellationToken ct = default)
     {
@@ -345,13 +582,30 @@ public sealed class ReceptionFacade
         await _db.SaveChangesAsync(ct);
     }
 
-    // ---------- helpers ----------
+    // ═══════════════════════════════════════════════════════════════════
+    //  HELPERS
+    // ═══════════════════════════════════════════════════════════════════
 
+    /// <summary>Checks for overlapping confirmed bookings only (no holds).</summary>
     private Task<bool> HasOverlapAsync(Guid roomId, DateTime checkIn, DateTime checkOut, CancellationToken ct) =>
         _db.Bookings.AnyAsync(b =>
             b.RoomId == roomId
             && (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed || b.Status == BookingStatus.CheckedIn)
             && b.CheckIn < checkOut && checkIn < b.CheckOut, ct);
+
+    /// <summary>Checks for overlapping bookings AND active holds.</summary>
+    private async Task<bool> HasOverlapOrHoldAsync(Guid roomId, DateTime checkIn, DateTime checkOut, CancellationToken ct)
+    {
+        var hasBooking = await HasOverlapAsync(roomId, checkIn, checkOut, ct);
+        if (hasBooking) return true;
+
+        var now = DateTime.UtcNow;
+        return await _db.RoomHolds.AnyAsync(h =>
+            h.RoomId == roomId
+            && h.Status == RoomHoldStatus.Active
+            && h.ExpiresAt > now
+            && h.CheckIn < checkOut && checkIn < h.CheckOut, ct);
+    }
 
     private async Task<Guest> ResolveGuestAsync(CreateBookingRequest req, CancellationToken ct)
     {

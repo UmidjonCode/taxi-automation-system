@@ -41,3 +41,6 @@ public sealed record CheckInResponse
 
 public sealed record ConfirmBookingRequest(decimal AdvancePayment);
 public sealed record AddExtraRequest(string Description, decimal Amount);
+public sealed record CreateHoldRequest(Guid RoomId, Guid GuestId, DateTime CheckIn, DateTime CheckOut);
+public sealed record ConfirmHoldRequest(decimal AdvancePayment);
+

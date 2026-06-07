@@ -1,4 +1,5 @@
 using HotelOS.Reception.Algorithms;
+using HotelOS.Reception.BackgroundServices;
 using HotelOS.Reception.Data;
 using HotelOS.Reception.Events;
 using HotelOS.Reception.Services;
@@ -30,6 +31,9 @@ builder.Services.AddScoped<IRoomAssignmentStrategy, RoomAssignmentStrategy>();
 builder.Services.AddScoped<IBillingCalculator, BillingCalculator>();
 builder.Services.AddSingleton<RoomKeyFactory>();
 builder.Services.AddScoped<ReceptionFacade>();
+
+// Background service: auto-expire stale room holds every 30s.
+builder.Services.AddHostedService<HoldExpiryService>();
 
 // Event handlers (Observer subscribers).
 builder.Services.AddScoped<RoomCleaningCompletedHandler>();
