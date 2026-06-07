@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { getAuth, authFetch } from '../App';
 
 export default function SearchRoomsPage() {
   const [checkIn, setCheckIn] = useState('');
@@ -7,74 +8,109 @@ export default function SearchRoomsPage() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  // Booking Modal State
-  const [selectedRoom, setSelectedRoom] = useState<any>(null);
-  const [password, setPassword] = useState('');
-  const [email, setEmail] = useState('');
+  // Hold/Payment modal state
+  const [activeHold, setActiveHold] = useState<any>(null);
+  const [timeLeft, setTimeLeft] = useState(0);
+  const timerRef = useRef<any>(null);
+
+  const { isLoggedIn, guestId } = getAuth();
+
+  // Countdown timer for active hold
+  useEffect(() => {
+    if (activeHold) {
+      const expiresAt = new Date(activeHold.expiresAt).getTime();
+      const tick = () => {
+        const remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          clearInterval(timerRef.current);
+          setActiveHold(null);
+          alert('Your hold has expired. The room is now available to others.');
+        }
+      };
+      tick();
+      timerRef.current = setInterval(tick, 1000);
+      return () => clearInterval(timerRef.current);
+    }
+  }, [activeHold]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checkIn || !checkOut) return;
-    
     setLoading(true);
     setSearched(true);
     try {
       const res = await fetch(`http://localhost:5001/api/rooms/search?checkIn=${checkIn}T14:00:00Z&checkOut=${checkOut}T11:00:00Z`);
       const data = await res.json();
-      setRooms(data);
+      setRooms(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error(err);
       alert('Failed to connect to the Reception API.');
     }
     setLoading(false);
   };
 
-  const handleBook = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleHold = async (room: any) => {
+    if (!isLoggedIn) {
+      alert('Please login first to book a room.');
+      window.location.href = '/login';
+      return;
+    }
 
-    // First attempt to login the user
     try {
-      const authRes = await fetch('http://localhost:5001/api/auth/login', {
+      const res = await authFetch('http://localhost:5001/api/bookings/hold', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({
+          roomId: room.id,
+          guestId: guestId,
+          checkIn: `${checkIn}T14:00:00Z`,
+          checkOut: `${checkOut}T11:00:00Z`
+        })
       });
 
-      if (!authRes.ok) {
-        alert('Authentication failed. Please check your email and password, or register an account first.');
-        return;
-      }
-      
-      const authData = await authRes.json();
-
-      const payload = {
-        guestId: authData.guestId, // Use GuestId instead of Guest details
-        style: selectedRoom.style === 'Standard' ? 0 : selectedRoom.style === 'Deluxe' ? 1 : 2,
-        checkIn: `${checkIn}T14:00:00Z`,
-        checkOut: `${checkOut}T11:00:00Z`,
-        preferredFloor: selectedRoom.floor,
-        advancePayment: selectedRoom.nightlyRate
-      };
-
-      const res = await fetch('http://localhost:5001/api/bookings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
       if (res.ok) {
-        alert('Booking confirmed!');
-        localStorage.setItem('guestEmail', email);
+        const hold = await res.json();
+        setActiveHold({ ...hold, room });
+      } else {
+        const err = await res.json();
+        alert(err.error || 'Failed to hold room.');
+      }
+    } catch (err) {
+      alert('Network error.');
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!activeHold) return;
+    try {
+      const res = await authFetch(`http://localhost:5001/api/bookings/hold/${activeHold.id}/confirm`, {
+        method: 'POST',
+        body: JSON.stringify({ advancePayment: activeHold.room.nightlyRate })
+      });
+
+      if (res.ok) {
+        clearInterval(timerRef.current);
+        setActiveHold(null);
+        alert('🎉 Booking confirmed! Redirecting to your reservations...');
         window.location.href = '/my-reservations';
       } else {
         const err = await res.json();
-        alert('Failed to book: ' + (err.error || 'Unknown error'));
+        alert(err.error || 'Failed to confirm booking.');
       }
     } catch (err) {
-      console.error(err);
-      alert('Network error occurred.');
+      alert('Network error.');
     }
   };
+
+  const handleCancelHold = async () => {
+    if (!activeHold) return;
+    try {
+      await authFetch(`http://localhost:5001/api/bookings/hold/${activeHold.id}`, { method: 'DELETE' });
+    } catch {}
+    clearInterval(timerRef.current);
+    setActiveHold(null);
+  };
+
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
   return (
     <div className="container">
@@ -100,10 +136,10 @@ export default function SearchRoomsPage() {
           <h3 style={{ marginBottom: 20 }}>All Rooms for these dates</h3>
           <div className="grid">
             {rooms.map(room => (
-              <div key={room.id} className="glass-card" style={{ opacity: room.isAvailable ? 1 : 0.6, position: 'relative' }}>
+              <div key={room.id} className="glass-card" style={{ opacity: room.isAvailable ? 1 : 0.5, position: 'relative', filter: room.isAvailable ? 'none' : 'grayscale(40%)' }}>
                 <span className="tag">{room.style}</span>
                 {!room.isAvailable && (
-                  <span style={{ position: 'absolute', top: 24, right: 24, background: '#ef4444', color: 'white', padding: '4px 12px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                  <span style={{ position: 'absolute', top: 24, right: 24, background: 'linear-gradient(135deg, #ef4444, #dc2626)', color: 'white', padding: '4px 14px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold', boxShadow: '0 2px 8px rgba(239,68,68,0.3)' }}>
                     Reserved
                   </span>
                 )}
@@ -112,11 +148,11 @@ export default function SearchRoomsPage() {
                 <h2 style={{ color: '#fff', marginTop: 16, marginBottom: 16 }}>${room.nightlyRate}<span style={{fontSize: '1rem', color: 'var(--text-secondary)'}}>/night</span></h2>
                 <button 
                   className="btn-primary" 
-                  style={{ width: '100%', background: room.isAvailable ? 'var(--accent-color)' : '#4b5563', cursor: room.isAvailable ? 'pointer' : 'not-allowed' }} 
-                  onClick={() => { if (room.isAvailable) setSelectedRoom(room); }}
+                  style={{ width: '100%', background: room.isAvailable ? '' : '#4b5563', cursor: room.isAvailable ? 'pointer' : 'not-allowed' }} 
+                  onClick={() => room.isAvailable && handleHold(room)}
                   disabled={!room.isAvailable}
                 >
-                  {room.isAvailable ? 'Book Now' : 'Currently Unavailable'}
+                  {room.isAvailable ? '🔒 Hold & Book' : 'Currently Unavailable'}
                 </button>
               </div>
             ))}
@@ -124,25 +160,43 @@ export default function SearchRoomsPage() {
         </>
       )}
 
-      {selectedRoom && (
+      {/* Hold/Payment Modal with Countdown */}
+      {activeHold && (
         <div style={{
           position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', 
-          background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(4px)',
+          background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(6px)',
           display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
         }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '500px' }}>
-            <h2>Confirm Booking</h2>
-            <p style={{ marginBottom: 20 }}>Room {selectedRoom.roomNumber} • ${selectedRoom.nightlyRate}/night</p>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: 20, fontSize: '0.9rem' }}>Please enter your login details to confirm this booking. If you don't have an account, please Register first.</p>
-            <form onSubmit={handleBook}>
-              <input className="input-field" type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} required style={{ marginBottom: 12 }} />
-              <input className="input-field" type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={{ marginBottom: 24 }} />
-              
-              <div style={{ display: 'flex', gap: 12 }}>
-                <button type="button" className="btn-primary" style={{ background: 'transparent', border: '1px solid var(--glass-border)' }} onClick={() => setSelectedRoom(null)}>Cancel</button>
-                <button type="submit" className="btn-primary" style={{ flex: 1 }}>Pay ${selectedRoom.nightlyRate} & Confirm</button>
-              </div>
-            </form>
+          <div className="glass-card" style={{ width: '100%', maxWidth: '480px', textAlign: 'center' }}>
+            {/* Timer */}
+            <div style={{
+              fontSize: '2.5rem', fontWeight: 800, fontFamily: 'monospace',
+              color: timeLeft <= 60 ? '#ef4444' : '#3b82f6',
+              marginBottom: 8,
+              animation: timeLeft <= 30 ? 'pulse 1s infinite' : 'none'
+            }}>
+              {formatTime(timeLeft)}
+            </div>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: 24, fontSize: '0.9rem' }}>
+              Room held for you. Complete payment before the timer runs out!
+            </p>
+
+            <div style={{ background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 20, marginBottom: 24, textAlign: 'left' }}>
+              <h3 style={{ marginBottom: 8 }}>Room {activeHold.room.roomNumber}</h3>
+              <p>Style: {activeHold.room.style} | Floor: {activeHold.room.floor}</p>
+              <p style={{ marginTop: 8 }}>Check-in: <strong>{checkIn}</strong></p>
+              <p>Check-out: <strong>{checkOut}</strong></p>
+              <h2 style={{ marginTop: 16, color: '#3b82f6' }}>${activeHold.room.nightlyRate} <span style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>advance</span></h2>
+            </div>
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button className="btn-primary" onClick={handleCancelHold} style={{ background: 'transparent', border: '1px solid var(--glass-border)', flex: 1 }}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleConfirmPayment} style={{ flex: 2 }}>
+                💳 Confirm & Pay ${activeHold.room.nightlyRate}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -42,6 +42,19 @@ public static class ReceptionSeeder
         });
 
         db.SaveChanges();
+
+        // Seed a default Receptionist account if none exists
+        if (!db.Accounts.Any())
+        {
+            db.Accounts.Add(new Account
+            {
+                Email = "admin@hotelos.local",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Admin123!"),
+                Role = AccountRole.Receptionist,
+                GuestId = null // Staff account, no linked guest
+            });
+            db.SaveChanges();
+        }
     }
 
     private static Room NewRoom(string number, int floor, RoomStyle style, decimal rate, string zone, DateTime lastCleaned) => new()

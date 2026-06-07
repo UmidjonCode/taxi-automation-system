@@ -1,67 +1,84 @@
 import { useState, useEffect } from 'react';
+import { getAuth, authFetch } from '../App';
 
 export default function MyReservationsPage() {
-  const [reservations, setReservations] = useState<any[]>([]);
+  const [bookings, setBookings] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const email = localStorage.getItem('guestEmail');
+  const { isLoggedIn, fullName } = getAuth();
 
   useEffect(() => {
-    if (!email) return;
-    
-    fetch(`http://localhost:5001/api/bookings/my?email=${encodeURIComponent(email)}`)
-      .then(res => res.json())
-      .then(data => {
-        setReservations(data);
-        setLoading(false);
-      })
-      .catch(err => {
+    if (!isLoggedIn) return;
+    (async () => {
+      try {
+        const res = await authFetch('http://localhost:5001/api/bookings/my');
+        if (res.ok) {
+          const data = await res.json();
+          setBookings(Array.isArray(data) ? data : []);
+        } else if (res.status === 401) {
+          localStorage.clear();
+          window.location.href = '/login';
+        }
+      } catch (err) {
         console.error(err);
-        setLoading(false);
-      });
-  }, [email]);
+      }
+      setLoading(false);
+    })();
+  }, []);
 
-  if (!email) {
+  if (!isLoggedIn) {
     return (
-      <div className="container" style={{ textAlign: 'center', marginTop: 100 }}>
-        <h2>Access Denied</h2>
-        <p>Please log in to view your reservations.</p>
+      <div className="container" style={{ textAlign: 'center', marginTop: 80 }}>
+        <div className="glass-card" style={{ maxWidth: 400, margin: '0 auto' }}>
+          <h2>Please Login</h2>
+          <p style={{ marginBottom: 20 }}>You need to login to view your reservations.</p>
+          <a href="/login" className="btn-primary">Go to Login</a>
+        </div>
       </div>
     );
   }
 
+  const statusColor = (s: string) => {
+    switch(s) {
+      case 'Confirmed': return '#22c55e';
+      case 'Pending': return '#f59e0b';
+      case 'CheckedIn': return '#3b82f6';
+      case 'CheckedOut': return '#6b7280';
+      case 'Cancelled': return '#ef4444';
+      default: return '#9ca3af';
+    }
+  };
+
   return (
     <div className="container">
-      <h2>My Reservations</h2>
-      <p style={{ marginBottom: 30 }}>Welcome back, {email}</p>
-      
+      <h2 style={{ marginBottom: 8 }}>My Reservations</h2>
+      <p style={{ color: 'var(--text-secondary)', marginBottom: 30 }}>Welcome back, {fullName}!</p>
+
       {loading ? (
         <p>Loading your reservations...</p>
-      ) : reservations.length === 0 ? (
-        <div className="glass-card" style={{ textAlign: 'center', padding: 60 }}>
-          <h3>No Reservations Found</h3>
-          <p>We couldn't find any upcoming stays for this email address.</p>
+      ) : bookings.length === 0 ? (
+        <div className="glass-card" style={{ textAlign: 'center' }}>
+          <p>You don't have any reservations yet.</p>
+          <a href="/rooms" className="btn-primary" style={{ display: 'inline-block', marginTop: 16 }}>Browse Rooms</a>
         </div>
       ) : (
         <div className="grid">
-          {reservations.map((res: any) => (
-            <div key={res.bookingId} className="glass-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <span className="tag">{res.status}</span>
-                <span style={{ fontWeight: 'bold', color: '#3b82f6' }}>Room {res.roomNumber}</span>
+          {bookings.map(b => (
+            <div key={b.bookingId} className="glass-card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h3>Room {b.roomNumber}</h3>
+                <span style={{
+                  background: statusColor(b.status),
+                  color: 'white',
+                  padding: '4px 12px',
+                  borderRadius: 12,
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold'
+                }}>{b.status}</span>
               </div>
-              <p><strong>Booking ID:</strong> {res.bookingId.split('-')[0]}...</p>
-              <p><strong>Nightly Rate:</strong> ${res.nightlyRate}</p>
-              <p><strong>Advance Paid:</strong> ${res.advancePayment}</p>
-              
-              {res.status === 'Confirmed' && (
-                <button 
-                  className="btn-primary" 
-                  style={{ width: '100%', marginTop: 20 }}
-                  onClick={() => alert(`Check-in code ready at front desk.`)}
-                >
-                  View Digital Key
-                </button>
-              )}
+              <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                Rate: ${b.nightlyRate}/night<br/>
+                Advance Paid: ${b.advancePayment}
+              </p>
             </div>
           ))}
         </div>

@@ -1,3 +1,4 @@
+using System.Text;
 using HotelOS.Reception.Algorithms;
 using HotelOS.Reception.BackgroundServices;
 using HotelOS.Reception.Data;
@@ -7,7 +8,9 @@ using HotelOS.Shared.Algorithms.Billing;
 using HotelOS.Shared.Algorithms.RoomAssignment;
 using HotelOS.Shared.Events;
 using HotelOS.Shared.Messaging;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +25,28 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
+
+// ── JWT Authentication ──────────────────────────────────────
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "HotelOS-SuperSecret-Key-Change-In-Production-2026!";
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "HotelOS",
+        ValidAudience = builder.Configuration["Jwt:Audience"] ?? "HotelOS.Web",
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+    };
+});
+builder.Services.AddAuthorization();
 
 builder.Services.AddDbContext<ReceptionDbContext>(o =>
     o.UseSqlite(builder.Configuration.GetConnectionString("ReceptionDb") ?? "Data Source=reception.db"));
@@ -64,6 +89,8 @@ bus.StartConsuming();
 app.UseSwagger();
 app.UseSwaggerUI();
 app.UseCors("AllowFrontend");
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapControllers();
 app.MapGet("/", () => Results.Ok(new { service = "Reception", status = "running" }));
 
