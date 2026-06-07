@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- SignalR ships with the ASP.NET Core shared framework; no package needed. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\HotelOS.Shared\HotelOS.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

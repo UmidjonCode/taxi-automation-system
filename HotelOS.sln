@@ -1,0 +1,57 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Shared", "src\Shared\HotelOS.Shared\HotelOS.Shared.csproj", "{90D0ED74-ABDB-4E8B-BB9D-BB29AD75FEA4}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Reception", "src\Services\HotelOS.Reception\HotelOS.Reception.csproj", "{C4EEB2A2-762F-41BB-A6AF-5B851E59A818}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Housekeeping", "src\Services\HotelOS.Housekeeping\HotelOS.Housekeeping.csproj", "{76E64534-4088-40B1-8747-81FC46B36826}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.RoomService", "src\Services\HotelOS.RoomService\HotelOS.RoomService.csproj", "{2FA41CAF-9D3A-4D2F-94CC-AAFECF10E371}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Maintenance", "src\Services\HotelOS.Maintenance\HotelOS.Maintenance.csproj", "{7902B22D-27CE-4EF6-A28A-C21E0A284C9F}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Dashboard", "src\Gateway\HotelOS.Dashboard\HotelOS.Dashboard.csproj", "{EE69D579-595B-47B2-89B8-2F46E5C90DF5}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "HotelOS.Algorithms.Tests", "tests\HotelOS.Algorithms.Tests\HotelOS.Algorithms.Tests.csproj", "{82EA5F71-E92E-4092-B525-44DA9AE2F054}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{90D0ED74-ABDB-4E8B-BB9D-BB29AD75FEA4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{90D0ED74-ABDB-4E8B-BB9D-BB29AD75FEA4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{90D0ED74-ABDB-4E8B-BB9D-BB29AD75FEA4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{90D0ED74-ABDB-4E8B-BB9D-BB29AD75FEA4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4EEB2A2-762F-41BB-A6AF-5B851E59A818}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4EEB2A2-762F-41BB-A6AF-5B851E59A818}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4EEB2A2-762F-41BB-A6AF-5B851E59A818}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4EEB2A2-762F-41BB-A6AF-5B851E59A818}.Release|Any CPU.Build.0 = Release|Any CPU
+		{76E64534-4088-40B1-8747-81FC46B36826}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{76E64534-4088-40B1-8747-81FC46B36826}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{76E64534-4088-40B1-8747-81FC46B36826}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{76E64534-4088-40B1-8747-81FC46B36826}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2FA41CAF-9D3A-4D2F-94CC-AAFECF10E371}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2FA41CAF-9D3A-4D2F-94CC-AAFECF10E371}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2FA41CAF-9D3A-4D2F-94CC-AAFECF10E371}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2FA41CAF-9D3A-4D2F-94CC-AAFECF10E371}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7902B22D-27CE-4EF6-A28A-C21E0A284C9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7902B22D-27CE-4EF6-A28A-C21E0A284C9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7902B22D-27CE-4EF6-A28A-C21E0A284C9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7902B22D-27CE-4EF6-A28A-C21E0A284C9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EE69D579-595B-47B2-89B8-2F46E5C90DF5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EE69D579-595B-47B2-89B8-2F46E5C90DF5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EE69D579-595B-47B2-89B8-2F46E5C90DF5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EE69D579-595B-47B2-89B8-2F46E5C90DF5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{82EA5F71-E92E-4092-B525-44DA9AE2F054}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{82EA5F71-E92E-4092-B525-44DA9AE2F054}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{82EA5F71-E92E-4092-B525-44DA9AE2F054}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{82EA5F71-E92E-4092-B525-44DA9AE2F054}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

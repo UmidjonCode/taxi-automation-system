@@ -1,0 +1,19 @@
+## .NET build output
+bin/
+obj/
+out/
+
+## SQLite databases created at runtime
+*.db
+*.db-shm
+*.db-wal
+
+## IDE / tooling
+.vs/
+.vscode/
+.idea/
+*.user
+
+## OS noise
+.DS_Store
+Thumbs.db

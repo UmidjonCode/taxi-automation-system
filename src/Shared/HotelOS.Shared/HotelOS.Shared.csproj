@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>HotelOS.Shared</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    HotelOS.Shared is the ONLY assembly every microservice references.
+    It carries cross-service CONTRACTS only: enums, integration-event payloads,
+    the message-broker abstraction, and the algorithm interfaces/DTOs.
+    It deliberately contains NO EF entities and NO business logic, so services
+    stay independent and own their data.
+  -->
+  <ItemGroup>
+    <PackageReference Include="RabbitMQ.Client" Version="6.8.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
+  </ItemGroup>
+
+</Project>

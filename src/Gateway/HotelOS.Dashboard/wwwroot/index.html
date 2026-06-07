@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HotelOS — Live Operations Dashboard</title>
+  <style>
+    :root { --bg:#0f172a; --card:#1e293b; --ink:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+    header { padding:18px 24px; border-bottom:1px solid #334155; display:flex; align-items:center; justify-content:space-between; }
+    header h1 { font-size:18px; margin:0; letter-spacing:.4px; }
+    .status { font-size:13px; color:var(--muted); }
+    .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; background:var(--bad); }
+    .dot.live { background:var(--ok); }
+    .wrap { display:grid; grid-template-columns: 320px 1fr; gap:18px; padding:18px 24px; }
+    .card { background:var(--card); border:1px solid #334155; border-radius:12px; padding:16px; }
+    .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 12px; }
+    .counters { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .counter { background:#0b1220; border-radius:10px; padding:12px; }
+    .counter .n { font-size:24px; font-weight:700; color:var(--accent); }
+    .counter .l { font-size:11px; color:var(--muted); margin-top:4px; }
+    #feed { height: calc(100vh - 190px); overflow:auto; }
+    .ev { border-left:3px solid var(--accent); padding:10px 12px; margin-bottom:8px; background:#0b1220; border-radius:0 8px 8px 0; animation:flash .6s ease; }
+    .ev .t { font-size:13px; font-weight:600; }
+    .ev .meta { font-size:11px; color:var(--muted); margin-top:2px; }
+    .ev pre { margin:8px 0 0; font-size:11px; color:#cbd5e1; white-space:pre-wrap; word-break:break-word; }
+    .ev.booking { border-color:#38bdf8 } .ev.guest { border-color:#22c55e }
+    .ev.room { border-color:#f59e0b } .ev.maintenance { border-color:#ef4444 }
+    .ev.roomservice { border-color:#a78bfa } .ev.key { border-color:#eab308 }
+    @keyframes flash { from { background:#1d3a52 } to { background:#0b1220 } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🏨 HotelOS — Live Operations Dashboard</h1>
+    <div class="status"><span id="dot" class="dot"></span><span id="conn">Connecting…</span></div>
+  </header>
+
+  <div class="wrap">
+    <aside>
+      <div class="card">
+        <h2>Event counters</h2>
+        <div class="counters">
+          <div class="counter"><div class="n" id="c-booking">0</div><div class="l">Bookings</div></div>
+          <div class="counter"><div class="n" id="c-guest">0</div><div class="l">Check in/out</div></div>
+          <div class="counter"><div class="n" id="c-room">0</div><div class="l">Cleaning</div></div>
+          <div class="counter"><div class="n" id="c-maintenance">0</div><div class="l">Maintenance</div></div>
+          <div class="counter"><div class="n" id="c-roomservice">0</div><div class="l">Room service</div></div>
+          <div class="counter"><div class="n" id="c-key">0</div><div class="l">Keys</div></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="card">
+      <h2>Live event stream</h2>
+      <div id="feed"></div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.0/signalr.min.js"></script>
+  <script>
+    const counters = { booking:0, guest:0, room:0, maintenance:0, roomservice:0, key:0 };
+    const feed = document.getElementById('feed');
+
+    function groupOf(topic) {
+      if (topic.startsWith('booking')) return 'booking';
+      if (topic.startsWith('guest')) return 'guest';
+      if (topic.startsWith('room.cleaning')) return 'room';
+      if (topic.startsWith('room.maintenance') || topic.startsWith('maintenance')) return 'maintenance';
+      if (topic.startsWith('roomservice')) return 'roomservice';
+      if (topic.startsWith('key')) return 'key';
+      return 'booking';
+    }
+
+    function render(msg) {
+      const g = groupOf(msg.topic);
+      counters[g] = (counters[g] || 0) + 1;
+      document.getElementById('c-' + g).textContent = counters[g];
+
+      const el = document.createElement('div');
+      el.className = 'ev ' + g;
+      el.innerHTML =
+        '<div class="t">' + msg.topic + '</div>' +
+        '<div class="meta">' + msg.name + ' · ' + new Date(msg.occurredAt).toLocaleTimeString() + '</div>' +
+        '<pre>' + JSON.stringify(msg.payload, null, 2) + '</pre>';
+      feed.prepend(el);
+      while (feed.children.length > 100) feed.removeChild(feed.lastChild);
+    }
+
+    const connection = new signalR.HubConnectionBuilder()
+      .withUrl('/hub/dashboard')
+      .withAutomaticReconnect()
+      .build();
+
+    connection.on('event', render);
+
+    function setConn(live, text) {
+      document.getElementById('dot').className = 'dot' + (live ? ' live' : '');
+      document.getElementById('conn').textContent = text;
+    }
+
+    connection.onreconnecting(() => setConn(false, 'Reconnecting…'));
+    connection.onreconnected(() => setConn(true, 'Live'));
+    connection.onclose(() => setConn(false, 'Disconnected'));
+
+    connection.start()
+      .then(() => setConn(true, 'Live'))
+      .catch(err => { setConn(false, 'Failed'); console.error(err); });
+  </script>
+</body>
+</html>
