@@ -14,6 +14,14 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+    });
+});
+
 builder.Services.AddDbContext<ReceptionDbContext>(o =>
     o.UseSqlite(builder.Configuration.GetConnectionString("ReceptionDb") ?? "Data Source=reception.db"));
 
@@ -51,6 +59,7 @@ bus.StartConsuming();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+app.UseCors("AllowFrontend");
 app.MapControllers();
 app.MapGet("/", () => Results.Ok(new { service = "Reception", status = "running" }));
 

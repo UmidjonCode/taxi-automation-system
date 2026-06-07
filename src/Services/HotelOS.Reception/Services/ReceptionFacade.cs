@@ -39,7 +39,9 @@ public sealed class ReceptionFacade
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<Room>> SearchRoomsAsync(
+    public record RoomSearchResult(Room Room, bool IsAvailable);
+
+    public async Task<IReadOnlyList<RoomSearchResult>> SearchRoomsAsync(
         RoomStyle? style, DateTime checkIn, DateTime checkOut, Guid? branchId, CancellationToken ct = default)
     {
         var rooms = await _db.Rooms.AsNoTracking()
@@ -48,11 +50,38 @@ public sealed class ReceptionFacade
             .Where(r => branchId == null || r.BranchId == branchId)
             .ToListAsync(ct);
 
-        var free = new List<Room>();
+        var results = new List<RoomSearchResult>();
         foreach (var room in rooms)
-            if (!await HasOverlapAsync(room.Id, checkIn, checkOut, ct))
-                free.Add(room);
-        return free;
+        {
+            var hasOverlap = await HasOverlapAsync(room.Id, checkIn, checkOut, ct);
+            results.Add(new RoomSearchResult(room, !hasOverlap));
+        }
+        return results;
+    }
+
+    public async Task<IReadOnlyList<BookingResponse>> GetBookingsByEmailAsync(string email, CancellationToken ct = default)
+    {
+        var guest = await _db.Guests.FirstOrDefaultAsync(g => g.Email == email, ct);
+        if (guest == null) return Array.Empty<BookingResponse>();
+
+        var bookings = await _db.Bookings
+            .Include(b => b.Room)
+            .Where(b => b.GuestId == guest.Id)
+            .OrderByDescending(b => b.CheckIn)
+            .ToListAsync(ct);
+
+        return bookings.Select(b => new BookingResponse
+        {
+            BookingId = b.Id,
+            GuestId = b.GuestId,
+            RoomId = b.RoomId,
+            RoomNumber = b.Room!.RoomNumber,
+            MatchTier = 0,
+            AssignmentReason = "",
+            Status = b.Status.ToString(),
+            NightlyRate = b.NightlyRate,
+            AdvancePayment = b.AdvancePayment
+        }).ToList();
     }
 
     public async Task<BookingResponse> CreateBookingAsync(CreateBookingRequest req, CancellationToken ct = default)

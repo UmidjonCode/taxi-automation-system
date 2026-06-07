@@ -21,14 +21,15 @@ public class RoomsController : ControllerBase
         CancellationToken ct)
     {
         var rooms = await _facade.SearchRoomsAsync(style, checkIn, checkOut, branchId, ct);
-        return Ok(rooms.Select(r => new
+        return Ok(rooms.Select(res => new
         {
-            r.Id,
-            r.RoomNumber,
-            r.Floor,
-            Style = r.Style.ToString(),
-            r.NightlyRate,
-            r.ProximityZone
+            res.Room.Id,
+            res.Room.RoomNumber,
+            res.Room.Floor,
+            Style = res.Room.Style.ToString(),
+            res.Room.NightlyRate,
+            res.Room.ProximityZone,
+            res.IsAvailable
         }));
     }
 }

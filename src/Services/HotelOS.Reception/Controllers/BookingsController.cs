@@ -10,6 +10,10 @@ public class BookingsController : ControllerBase
     private readonly ReceptionFacade _facade;
     public BookingsController(ReceptionFacade facade) => _facade = facade;
 
+    [HttpGet("my")]
+    public Task<IActionResult> GetMyBookings([FromQuery] string email, CancellationToken ct)
+        => Guard(async () => (object)await _facade.GetBookingsByEmailAsync(email, ct));
+
     [HttpPost]
     public Task<IActionResult> Create([FromBody] CreateBookingRequest req, CancellationToken ct)
         => Guard(() => _facade.CreateBookingAsync(req, ct));
